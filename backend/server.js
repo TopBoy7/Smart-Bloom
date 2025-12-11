@@ -14,7 +14,7 @@ app.use(express.json());
 app.use('/api', apiRouter);
 
 // simple health check
-app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+app.get(['/', '/health'], (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
