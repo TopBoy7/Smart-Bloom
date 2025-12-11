@@ -1,25 +1,27 @@
 const express = require('express');
+const Page = require('../db/model');
 const router = express.Router();
-const data = require('../db/data');
 
 // GET /api/ -> list top-level keys
 router.get('/', (req, res) => {
-  return res.json({ availableKeys: Object.keys(data) });
+  return res.send("Smart bloom backend!")
 });
 
-// GET /api/:key -> return data[key] or 404
-router.get('/:key', (req, res) => {
+router.get('/:key', async (req, res) => {
   const { key } = req.params;
 
-  if (Object.prototype.hasOwnProperty.call(data, key)) {
-    return res.json({ key, data: data[key] });
+  const page = await Page.findOne({name: key});
+  const data = page ? page.data : null;  
+
+  if (!data) {
+    return res.status(404).json({
+      error: 'Key not found',
+      requested: key,
+    });
   }
 
-  return res.status(404).json({
-    error: 'Key not found',
-    requested: key,
-    availableKeys: Object.keys(data),
-  });
+    return res.status(200).json({ key, data });
+
 });
 
 module.exports = router;
