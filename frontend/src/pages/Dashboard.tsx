@@ -6,63 +6,84 @@ import { StatusIndicator } from "@/components/StatusIndicator";
 import { Button } from "@/components/ui/button";
 import { Thermometer, Droplets, Wind, Power, Calendar } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import data from "@/lib/mockData"
 
-const generateMockData = () => {
-  const data = [];
-  const now = new Date();
 
-  for (let i = 23; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * 60 * 60 * 1000);
-    data.push({
-      time: time.getHours() + ":00",
-      moisture: Math.floor(35 + Math.random() * 20 + Math.sin(i / 4) * 10),
-      temperature: Math.floor(22 + Math.random() * 8 + Math.cos(i / 3) * 3),
-    });
-  }
-
-  return data;
-};
 
 const Dashboard = () => {
   const { toast } = useToast();
-  const [moisture, setMoisture] = useState(45);
-  const [temperature, setTemperature] = useState(28);
-  const [humidity, setHumidity] = useState(62);
-  const [connected] = useState(true);
-  const [chartData] = useState(generateMockData());
-  const [lastUpdate, setLastUpdate] = useState(new Date().toLocaleTimeString());
-  const [isIrrigating, setIsIrrigating] = useState(false);
 
+  // remote-backed data
+  const [dashboardData, setDashboardData] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // fetch initial dashboard payload from backend
   useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    const base = import.meta.env.VITE_FRONTEND_URL ?? "";
+
+    fetch(`${base}/api/dashboard`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) {
+          const txt = await res.text().catch(() => "");
+          throw new Error(txt || `HTTP ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((payload) => {
+        const d = payload.data ?? payload;
+        setDashboardData(d);
+      })
+      .catch((err) => {
+        if ((err as any).name !== "AbortError") setError((err as Error).message || "Failed to load dashboard");
+      })
+      .finally(() => setLoading(false));
+
+    return () => controller.abort();
+  }, []);
+
+  // simulated real-time updates — only run when we have data
+  useEffect(() => {
+    if (!dashboardData) return;
     const interval = setInterval(() => {
-      // Simulate real-time updates (ready for Firestore/WebSocket integration)
-      setMoisture((prev) => {
-        let newVal = prev + (Math.random() - 0.5) * 3;
-        if (isIrrigating) newVal += 0.5; // Moisture increases during irrigation
-        return Math.max(20, Math.min(80, newVal));
-      });
-      setTemperature((prev) =>
-        Math.max(20, Math.min(35, prev + (Math.random() - 0.5) * 2))
-      );
-      setHumidity((prev) =>
-        Math.max(40, Math.min(90, prev + (Math.random() - 0.5) * 4))
-      );
-      setLastUpdate(new Date().toLocaleTimeString());
+      setDashboardData((prev: any) => ({
+        ...prev,
+        moisture: Math.max(
+          20,
+          Math.min(
+            80,
+            prev.moisture + (Math.random() - 0.5) * 3 + (prev.isIrrigating ? 0.5 : 0)
+          )
+        ),
+        temperature: Number(
+          Math.max(20, Math.min(35, prev.temperature + (Math.random() - 0.5) * 2)).toFixed(2)
+        ),
+        humidity: Number(
+          Math.max(40, Math.min(90, prev.humidity + (Math.random() - 0.5) * 4)).toFixed(2)
+        ),
+        lastUpdate: new Date().toLocaleTimeString(),
+      }));
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [isIrrigating]);
+  }, [dashboardData?.isIrrigating, dashboardData]);
 
+  // manual irrigation handlers — guard for null
   const handleManualIrrigation = () => {
-    setIsIrrigating(true);
+    if (!dashboardData) return;
+    setDashboardData((prev: any) => ({ ...prev, isIrrigating: true }));
+
     toast({
       title: "Irrigation Started",
       description: "Manual irrigation activated for 10 minutes",
     });
 
-    // Auto-stop after 10 minutes (simulated as 30 seconds for demo)
     setTimeout(() => {
-      setIsIrrigating(false);
+      setDashboardData((prev: any) => ({ ...prev, isIrrigating: false }));
+
       toast({
         title: "Irrigation Completed",
         description: "Manual irrigation cycle finished",
@@ -71,7 +92,9 @@ const Dashboard = () => {
   };
 
   const stopIrrigation = () => {
-    setIsIrrigating(false);
+    if (!dashboardData) return;
+    setDashboardData((prev: any) => ({ ...prev, isIrrigating: false }));
+
     toast({
       title: "Irrigation Stopped",
       description: "Manual irrigation stopped",
@@ -79,35 +102,56 @@ const Dashboard = () => {
     });
   };
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-sm text-muted-foreground">Loading dashboard…</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-sm text-destructive">Error loading dashboard: {error}</div>
+      </div>
+    );
+  }
+
+  if (!dashboardData) return null;
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-6 space-y-6">
+
+        {/* HEADER */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
-            <p className="text-muted-foreground mt-1">
-              Real-time irrigation monitoring
-            </p>
+            <p className="text-muted-foreground mt-1">Real-time irrigation monitoring</p>
           </div>
-          <StatusIndicator connected={connected} lastUpdate={lastUpdate} />
+
+          <StatusIndicator
+            connected={dashboardData.connected}
+            lastUpdate={dashboardData.lastUpdate}
+          />
         </div>
 
+        {/* MAIN GRID */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left column */}
           <div className="lg:col-span-1 space-y-4">
-            <MoistureGauge value={moisture} />
+            <MoistureGauge value={dashboardData.moisture} />
 
-            {/* Quick Action Controls */}
+            {/* QUICK ACTIONS */}
             <div className="bg-card rounded-lg border border-border p-4">
               <h3 className="font-semibold text-sm mb-3 text-foreground">
                 Quick Actions
               </h3>
+
               <div className="space-y-2">
-                {!isIrrigating ? (
-                  <Button
-                    onClick={handleManualIrrigation}
-                    className="w-full"
-                    size="lg"
-                  >
+                {!dashboardData.isIrrigating ? (
+                  <Button onClick={handleManualIrrigation} className="w-full" size="lg">
                     <Power className="h-4 w-4 mr-2" />
                     Start Irrigation
                   </Button>
@@ -122,6 +166,7 @@ const Dashboard = () => {
                     Stop Irrigation
                   </Button>
                 )}
+
                 <Button
                   variant="outline"
                   className="w-full"
@@ -131,7 +176,8 @@ const Dashboard = () => {
                   View Schedule
                 </Button>
               </div>
-              {isIrrigating && (
+
+              {dashboardData.isIrrigating && (
                 <div className="mt-3 p-2 bg-primary/10 rounded text-sm text-primary">
                   ⚡ Irrigation in progress...
                 </div>
@@ -139,24 +185,27 @@ const Dashboard = () => {
             </div>
           </div>
 
+          {/* Right column */}
           <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-4">
             <EnvironmentCard
               title="Temperature"
-              value={temperature}
+              value={dashboardData.temperature}
               unit="°C"
               icon={Thermometer}
               trend="up"
             />
+
             <EnvironmentCard
               title="Humidity"
-              value={humidity}
+              value={dashboardData.humidity}
               unit="%"
               icon={Droplets}
               trend="stable"
             />
+
             <EnvironmentCard
               title="Wind Speed"
-              value={12}
+              value={dashboardData.windSpeed}
               unit="km/h"
               icon={Wind}
               trend="down"
@@ -164,69 +213,79 @@ const Dashboard = () => {
           </div>
         </div>
 
-        <MoistureChart data={chartData} />
+        <MoistureChart data={dashboardData.chartData} />
 
+        {/* AI & WATER SAVINGS */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+          {/* AI Recommendations */}
           <div className="bg-card rounded-lg border border-border p-6">
             <h3 className="font-semibold text-lg mb-4 text-foreground">
               AI Recommendations
             </h3>
+
             <div className="space-y-3">
-              <div className="flex items-start gap-3 p-3 rounded-md bg-success/10">
-                <div className="w-2 h-2 rounded-full bg-success mt-2" />
-                <div>
-                  <p className="font-medium text-foreground">
-                    Optimal Conditions
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Current moisture levels are ideal. No irrigation needed.
-                  </p>
+              {dashboardData.aiRecommendations.map((rec: any, index: number) => (
+                <div
+                  key={index}
+                  className={`flex items-start gap-3 p-3 rounded-md bg-${rec.color}/10`}
+                >
+                  <div className={`w-2 h-2 rounded-full bg-${rec.color} mt-2`} />
+                  <div>
+                    <p className="font-medium text-foreground">{rec.title}</p>
+                    <p className="text-sm text-muted-foreground">{rec.message}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-start gap-3 p-3 rounded-md bg-info/10">
-                <div className="w-2 h-2 rounded-full bg-info mt-2" />
-                <div>
-                  <p className="font-medium text-foreground">Next Watering</p>
-                  <p className="text-sm text-muted-foreground">
-                    Predicted in 6 hours based on current trend.
-                  </p>
-                </div>
-              </div>
+              ))}
             </div>
           </div>
 
+          {/* Water Savings */}
           <div className="bg-card rounded-lg border border-border p-6">
             <h3 className="font-semibold text-lg mb-4 text-foreground">
               Water Savings
             </h3>
+
             <div className="space-y-4">
+              {/* WEEK */}
               <div>
                 <div className="flex justify-between text-sm mb-2">
                   <span className="text-muted-foreground">This Week</span>
                   <span className="font-semibold text-foreground">
-                    22% saved
+                    {dashboardData.waterSavings.week}% saved
                   </span>
                 </div>
                 <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-primary rounded-full w-[22%]" />
+                  <div
+                    className="h-full bg-primary rounded-full"
+                    style={{ width: `${dashboardData.waterSavings.week}%` }}
+                  />
                 </div>
               </div>
+
+              {/* MONTH */}
               <div>
                 <div className="flex justify-between text-sm mb-2">
                   <span className="text-muted-foreground">This Month</span>
                   <span className="font-semibold text-foreground">
-                    18% saved
+                    {dashboardData.waterSavings.month}% saved
                   </span>
                 </div>
                 <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-primary rounded-full w-[18%]" />
+                  <div
+                    className="h-full bg-primary rounded-full"
+                    style={{ width: `${dashboardData.waterSavings.month}%` }}
+                  />
                 </div>
               </div>
+
               <p className="text-sm text-muted-foreground pt-2">
-                ≈ 450 liters saved compared to traditional irrigation
+                ≈ {dashboardData.waterSavings.totalLitersSaved} liters saved
+                compared to traditional irrigation
               </p>
             </div>
           </div>
+
         </div>
       </div>
     </div>
